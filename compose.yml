@@ -1,0 +1,75 @@
+services:
+  kita:
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    image: efrecon/webdav-client
+    container_name: webdav-client-kita
+    restart: unless-stopped
+    devices:
+      - /dev/fuse
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - apparmor=unconfined
+    environment:
+      - WEBDRIVE_USERNAME=${KITA_WEBDRIVE_USERNAME}
+      - WEBDRIVE_PASSWORD=${KITA_WEBDRIVE_PASSWORD}
+      - WEBDRIVE_URL=${KITA_WEBDRIVE_URL}
+      - DAVFS2_ASK_AUTH=${KITA_DAVFS2_ASK_AUTH}
+      - OWNER=${KITA_OWNER}
+    volumes:
+      - /etc/localtime:/etc/localtime
+      - ${KITA_MOUNT_POINT}:/mnt/webdrive:rshared
+    healthcheck:
+      test: ["CMD", "ls", "/mnt/webdrive"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  nginx:
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    image: nginx:alpine
+    container_name: webdav-nginx
+    user: root
+    depends_on:
+      - kita
+    restart: unless-stopped
+    ports:
+      - "7880:80"
+    volumes:
+      - /etc/localtime:/etc/localtime
+      - ./nginx/conf.d:/etc/nginx/conf.d
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ${NGINX_HTML_PATH}:/usr/share/nginx/html
+    healthcheck:
+      test: ["CMD", "ls", "/usr/share/nginx/html/media"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  watchtower-health:
+    image: containrrr/watchtower
+    container_name: watchtower-health
+    restart: always
+    environment:
+      - HTTP_PROXY=http://host.docker.internal:9051
+      - HTTPS_PROXY=http://host.docker.internal:9051
+    extra_hosts:
+      - "host.docker.internal:172.23.63.253"
+    volumes:
+      - /etc/localtime:/etc/localtime
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: --cleanup --include-restarting --include-stopped --enable-lifecycle-hooks --interval 3600 --label-enable
+
+  autoheal:
+    image: willfarrell/autoheal
+    container_name: autoheal
+    restart: always
+    environment:
+      - AUTOHEAL_INTERVAL=30
+      - AUTOHEAL_START_PERIOD=60
+      - AUTOHEAL_DEFAULT_STOP_TIMEOUT=10
+    volumes:
+      - /etc/localtime:/etc/localtime
+      - /var/run/docker.sock:/var/run/docker.sock
