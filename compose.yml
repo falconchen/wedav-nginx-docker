@@ -2,6 +2,7 @@ services:
   kita:
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
+      - "autoheal=true"
     image: efrecon/webdav-client
     container_name: webdav-client-kita
     restart: unless-stopped
@@ -29,6 +30,7 @@ services:
   nginx:
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
+      - "autoheal=true"
     image: nginx:alpine
     container_name: webdav-nginx
     user: root
