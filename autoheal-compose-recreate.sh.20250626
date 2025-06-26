@@ -1,0 +1,54 @@
+#!/bin/bash
+
+# === 配置区 ===
+
+# 你定义在 compose 文件里的容器名（即 container_name）
+CONTAINER_NAME="webdav-client-kita"
+
+# compose.yml 所在目录
+COMPOSE_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+
+# === 检查 health 状态 ===
+
+health_status=$(docker inspect --format='{{.State.Health.Status}}' "$CONTAINER_NAME" 2>/dev/null)
+
+if [ "$health_status" != "unhealthy" ]; then
+  #echo "[$(date)] $CONTAINER_NAME is healthy or has no health check (status=$health_status)."
+  exit 0
+fi
+
+# === 进入 compose 目录 ===
+
+cd "$COMPOSE_DIR" || {
+  echo "[$(date)] ERROR: Failed to cd into $COMPOSE_DIR"
+  exit 1
+}
+
+# === 自动获取 compose project 名 ===
+
+COMPOSE_PROJECT_NAME=$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' "$CONTAINER_NAME")
+
+if [ -z "$COMPOSE_PROJECT_NAME" ]; then
+  echo "[$(date)] ERROR: Cannot determine docker-compose project name from container $CONTAINER_NAME"
+  exit 1
+fi
+
+# === 自动获取 service 名（从 compose 定义中获取的 service 名） ===
+
+SERVICE_NAME=$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.service" }}' "$CONTAINER_NAME")
+
+if [ -z "$SERVICE_NAME" ]; then
+  echo "[$(date)] ERROR: Cannot determine service name from container $CONTAINER_NAME"
+  exit 1
+fi
+
+# === 重建该服务 ===
+
+echo "[$(date)] $CONTAINER_NAME is unhealthy. Recreating service '$SERVICE_NAME' in project '$COMPOSE_PROJECT_NAME'..."
+
+docker compose -p "$COMPOSE_PROJECT_NAME" up -d --force-recreate --no-deps "$SERVICE_NAME"
+
+echo "[$(date)] Done. Service '$SERVICE_NAME' has been recreated."
+
+exit 0
+

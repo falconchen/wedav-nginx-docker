@@ -2,53 +2,63 @@
 
 # === 配置区 ===
 
-# 你定义在 compose 文件里的容器名（即 container_name）
 CONTAINER_NAME="webdav-client-kita"
-
-# compose.yml 所在目录
+FUSE_MOUNT="/mnt/kita"
 COMPOSE_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 
-# === 检查 health 状态 ===
+# === 自动检测 compose project 和 service 名称 ===
+
+COMPOSE_PROJECT_NAME=$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' "$CONTAINER_NAME" 2>/dev/null)
+SERVICE_NAME=$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.service" }}' "$CONTAINER_NAME" 2>/dev/null)
+
+if [ -z "$COMPOSE_PROJECT_NAME" ] || [ -z "$SERVICE_NAME" ]; then
+  echo "[$(date)] ERROR: Cannot determine compose project or service name from container $CONTAINER_NAME"
+  exit 1
+fi
+
+# === 检查是否 unhealthy ===
 
 health_status=$(docker inspect --format='{{.State.Health.Status}}' "$CONTAINER_NAME" 2>/dev/null)
 
-if [ "$health_status" != "unhealthy" ]; then
-  echo "[$(date)] $CONTAINER_NAME is healthy or has no health check (status=$health_status)."
-  exit 0
+recreate_flag=0
+
+if [ "$health_status" = "unhealthy" ]; then
+  echo "[$(date)] $CONTAINER_NAME is unhealthy. Will recreate."
+  recreate_flag=1
 fi
 
-# === 进入 compose 目录 ===
+# === 检查挂载点是否崩溃 ===
 
-cd "$COMPOSE_DIR" || {
-  echo "[$(date)] ERROR: Failed to cd into $COMPOSE_DIR"
-  exit 1
-}
+if mountpoint -q "$FUSE_MOUNT"; then
+  if ! ls "$FUSE_MOUNT" &> /dev/null; then
+    echo "[$(date)] Mountpoint $FUSE_MOUNT is broken. Attempting to unmount..."
 
-# === 自动获取 compose project 名 ===
-
-COMPOSE_PROJECT_NAME=$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' "$CONTAINER_NAME")
-
-if [ -z "$COMPOSE_PROJECT_NAME" ]; then
-  echo "[$(date)] ERROR: Cannot determine docker-compose project name from container $CONTAINER_NAME"
-  exit 1
+    if sudo fusermount -u "$FUSE_MOUNT" || sudo umount -l "$FUSE_MOUNT"; then
+      echo "[$(date)] Successfully unmounted $FUSE_MOUNT"
+      recreate_flag=1
+    else
+      echo "[$(date)] ERROR: Failed to unmount $FUSE_MOUNT"
+      exit 1
+    fi
+  fi
 fi
 
-# === 自动获取 service 名（从 compose 定义中获取的 service 名） ===
+# === 重建容器（如果需要） ===
 
-SERVICE_NAME=$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.service" }}' "$CONTAINER_NAME")
+if [ "$recreate_flag" = "1" ]; then
+  echo "[$(date)] Recreating service '$SERVICE_NAME' from compose project '$COMPOSE_PROJECT_NAME'..."
 
-if [ -z "$SERVICE_NAME" ]; then
-  echo "[$(date)] ERROR: Cannot determine service name from container $CONTAINER_NAME"
-  exit 1
+  cd "$COMPOSE_DIR" || {
+    echo "[$(date)] ERROR: Failed to cd into $COMPOSE_DIR"
+    exit 1
+  }
+
+  docker compose -p "$COMPOSE_PROJECT_NAME" up -d --force-recreate --no-deps "$SERVICE_NAME"
+
+  echo "[$(date)] [$SERVICE_NAME] has been recreated."
+else
+  echo "[$(date)] No issues detected for $CONTAINER_NAME"
 fi
-
-# === 重建该服务 ===
-
-echo "[$(date)] $CONTAINER_NAME is unhealthy. Recreating service '$SERVICE_NAME' in project '$COMPOSE_PROJECT_NAME'..."
-
-docker compose -p "$COMPOSE_PROJECT_NAME" up -d --force-recreate --no-deps "$SERVICE_NAME"
-
-echo "[$(date)] Done. Service '$SERVICE_NAME' has been recreated."
 
 exit 0
 
